@@ -1,0 +1,55 @@
+name: scanner
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"   # scan + alertes instantanées
+    - cron: "30 6 * * *"    # résumé du matin : 07h30 Paris en hiver (08h30 en été)
+    - cron: "30 16 * * *"   # résumé du soir : 17h30 Paris en hiver (18h30 en été)
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "scan, test ou digest"
+        default: "test"
+      hours:
+        description: "Heures couvertes par le digest"
+        default: "12"
+
+concurrency:
+  group: scanner
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Garde la mémoire du scanner (tokens déjà alertés) entre deux exécutions
+      - uses: actions/cache@v4
+        with:
+          path: state.json
+          key: state-${{ github.run_id }}
+          restore-keys: state-
+
+      - name: Lancer le scanner
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          EVENT_NAME: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          INPUT_MODE: ${{ github.event.inputs.mode }}
+          INPUT_HOURS: ${{ github.event.inputs.hours }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            python scanner.py "${INPUT_MODE:-test}" "${INPUT_HOURS:-12}"
+          elif [ "$SCHEDULE" = "30 6 * * *" ]; then
+            python scanner.py digest 12
+          elif [ "$SCHEDULE" = "30 16 * * *" ]; then
+            python scanner.py digest 10
+          else
+            python scanner.py scan
+          fi
